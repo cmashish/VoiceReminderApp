@@ -1,6 +1,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+	<uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+	<uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>
+	<uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT"/>
+	<uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+	<uses-permission android:name="android.permission.WAKE_LOCK"/>
 
     <application
       android:name=".MainApplication"
@@ -9,7 +14,7 @@
       android:roundIcon="@mipmap/ic_launcher_round"
       android:allowBackup="false"
       android:theme="@style/AppTheme"
-      android:usesCleartextTraffic="${usesCleartextTraffic}"
+      android:usesCleartextTraffic="true"
       android:supportsRtl="true">
       <activity
         android:name=".MainActivity"
@@ -23,5 +28,20 @@
             <category android:name="android.intent.category.LAUNCHER" />
         </intent-filter>
       </activity>
+	    <activity android:name=".AlarmActivity" 
+				  android:exported="false" 
+				  android:excludeFromRecents="true" 
+				  android:launchMode="singleTop" 
+				  android:showWhenLocked="true" 
+				  android:turnScreenOn="true"
+				  android:screenOrientation="portrait"/>
+
+		<receiver android:name=".AlarmReceiver" android:exported="false"/>
+		<receiver android:name=".BootReceiver" android:enabled="true" android:exported="true">
+			<intent-filter>
+				<action android:name="android.intent.action.BOOT_COMPLETED"/>
+				<action android:name="android.intent.action.LOCKED_BOOT_COMPLETED"/>
+			</intent-filter>
+		</receiver>
     </application>
 </manifest>
