@@ -1,7 +1,9 @@
 package com.reminderapp
 
 import android.app.AlarmManager
+import android.app.DatePickerDialog
 import android.app.TimePickerDialog
+import android.widget.DatePicker
 import android.widget.TimePicker
 import android.content.Intent
 import android.os.Build
@@ -14,6 +16,40 @@ import org.json.JSONObject
 
 class AlarmModule(private val ctx: ReactApplicationContext) : ReactContextBaseJavaModule(ctx) {
     override fun getName() = "AlarmModule"
+
+    @ReactMethod
+    fun showDatePicker(initialYear: Int, initialMonth: Int, initialDay: Int, promise: Promise) {
+        val activity: android.app.Activity? = ctx.getCurrentActivity()
+        if (activity == null) {
+            promise.reject("NO_ACTIVITY", "No foreground Activity is available.")
+            return
+        }
+
+        activity.runOnUiThread {
+            val year = initialYear.coerceIn(2000, 2100)
+            val month = initialMonth.coerceIn(0, 11)
+            val day = initialDay.coerceIn(1, 31)
+            val dialog = DatePickerDialog(
+                activity,
+                { _: DatePicker, selectedYear: Int, selectedMonth: Int, selectedDay: Int ->
+                    promise.resolve(String.format("%04d-%02d-%02d", selectedYear, selectedMonth + 1, selectedDay))
+                },
+                year,
+                month,
+                day,
+            )
+            // Disable every date before today while keeping today selectable.
+            val todayStart = java.util.Calendar.getInstance().apply {
+                set(java.util.Calendar.HOUR_OF_DAY, 0)
+                set(java.util.Calendar.MINUTE, 0)
+                set(java.util.Calendar.SECOND, 0)
+                set(java.util.Calendar.MILLISECOND, 0)
+            }.timeInMillis
+            dialog.datePicker.minDate = todayStart
+            dialog.setOnCancelListener { promise.resolve(null) }
+            dialog.show()
+        }
+    }
 
     @ReactMethod
     fun showTimePicker(initialHour: Int, initialMinute: Int, promise: Promise) {
@@ -33,7 +69,7 @@ class AlarmModule(private val ctx: ReactApplicationContext) : ReactContextBaseJa
                 },
                 hour,
                 minute,
-                android.text.format.DateFormat.is24HourFormat(activity)
+                android.text.format.DateFormat.is24HourFormat(activity),
             )
             dialog.setOnCancelListener { promise.resolve(null) }
             dialog.show()
@@ -48,6 +84,7 @@ class AlarmModule(private val ctx: ReactApplicationContext) : ReactContextBaseJa
                 put("title", title)
                 put("timestamp", timestamp.toLong())
                 put("enabled", true)
+                if (!has("repeatType")) put("repeatType", "ONCE")
             }
             AlarmStorage.upsert(ctx, alarm)
             AlarmScheduler.schedule(ctx, id, title, timestamp.toLong(), alarm.toString())

@@ -2,240 +2,111 @@ package com.reminderapp
 
 import android.content.BroadcastReceiver
 import android.content.Context
-import android.content.Intent
+import android.media.AudioAttributes
+import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import java.util.Locale
 
 class AlarmReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: android.content.Intent) {
+        if (intent.action != AlarmScheduler.ACTION_ALARM) return
 
-    override fun onReceive(context: Context, intent: Intent) {
+        val id = intent.getStringExtra(AlarmScheduler.EXTRA_ID) ?: return
+        val title = intent.getStringExtra(AlarmScheduler.EXTRA_TITLE) ?: "Reminder"
+        val json = intent.getStringExtra(AlarmScheduler.EXTRA_JSON) ?: "{}"
 
-        if (intent.action != AlarmScheduler.ACTION_ALARM) {
-            return
-        }
-
-        val id =
-            intent.getStringExtra(AlarmScheduler.EXTRA_ID)
-                ?: return
-
-        val title =
-            intent.getStringExtra(AlarmScheduler.EXTRA_TITLE)
-                ?: "Reminder"
-
-        val json =
-            intent.getStringExtra(AlarmScheduler.EXTRA_JSON)
-                ?: "{}"
-
-        /*
-         * Show notification immediately.
-         *
-         * This keeps the existing v5 lock-screen/full-screen behavior.
-         */
-        AlarmNotification.show(
-            context,
-            id,
-            title,
-            json
-        )
-
-        /*
-         * Speak using Android ALARM audio instead of MEDIA/MUSIC audio.
-         */
-        speakReminder(
-            context,
-            id,
-            title,
-            json
-        )
+        AlarmNotification.show(context, id, title, json)
+        AlarmScheduler.scheduleNextRepeat(context.applicationContext, json)
+        speakReminder(context, id, title, json)
     }
 
-    private fun speakReminder(
-        context: Context,
-        id: String,
-        title: String,
-        json: String
-    ) {
-
+    private fun speakReminder(context: Context, id: String, title: String, json: String) {
         val message = try {
-
-            org.json.JSONObject(json)
-                .optString(
-                    "message",
-                    "It's time for your reminder."
-                )
-
+            org.json.JSONObject(json).optString("message", "It's time for your reminder.")
         } catch (_: Exception) {
-
             "It's time for your reminder."
         }
 
-        val speech =
-            if (title.isBlank()) {
-                message
-            } else {
-                "$title. $message"
-            }
-
-        /*
-         * BroadcastReceiver has limited lifetime.
-         *
-         * goAsync() keeps the receiver alive while TTS initializes
-         * and speaks the reminder.
-         */
+        val speech = if (title.isBlank()) message else "$title. $message"
         val pendingResult = goAsync()
-
         val appContext = context.applicationContext
+        val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+        val alarmAttributes = AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_ALARM)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+            .build()
 
-        /*
-         * Centralized alarm audio manager.
-         */
-        val alarmAudioManager =
-            AlarmAudioManager(appContext)
-
-        /*
-         * Request alarm audio focus.
-         */
-        alarmAudioManager.requestAlarmAudioFocus()
-
-        /*
-         * If ALARM volume itself is zero, make it minimally audible.
-         *
-         * We do NOT force maximum volume.
-         */
-        alarmAudioManager.ensureAlarmVolumeAudible()
+        if (audioManager.getStreamVolume(android.media.AudioManager.STREAM_ALARM) <= 0) {
+            val max = audioManager.getStreamMaxVolume(android.media.AudioManager.STREAM_ALARM)
+            if (max > 0) {
+                audioManager.setStreamVolume(android.media.AudioManager.STREAM_ALARM, 1, 0)
+            }
+        }
 
         var tts: TextToSpeech? = null
-
         tts = TextToSpeech(appContext) { status ->
-
             val engine = tts ?: run {
-
-                alarmAudioManager.releaseAlarmAudioFocus()
                 pendingResult.finish()
-
                 return@TextToSpeech
             }
 
             if (status != TextToSpeech.SUCCESS) {
-
                 engine.shutdown()
-
-                alarmAudioManager.releaseAlarmAudioFocus()
                 pendingResult.finish()
-
                 return@TextToSpeech
             }
 
-            /*
-             * IMPORTANT:
-             *
-             * Tell Android that this TTS belongs to an ALARM.
-             *
-             * This is the main fix for the current problem.
-             */
             try {
-
-                engine.setAudioAttributes(
-                    alarmAudioManager.getAudioAttributes()
-                )
-
+                engine.setAudioAttributes(alarmAttributes)
             } catch (_: Exception) {
-                // Continue; TTS may still work on older engines.
+                // Older/third-party TTS engines may not support the attribute.
             }
 
-            /*
-             * Set device default language.
-             */
             val languageResult = try {
-
-                engine.setLanguage(
-                    Locale.getDefault()
-                )
-
+                engine.setLanguage(Locale.getDefault())
             } catch (_: Exception) {
-
                 TextToSpeech.LANG_NOT_SUPPORTED
             }
 
-            if (
-                languageResult ==
-                    TextToSpeech.LANG_MISSING_DATA ||
-                languageResult ==
-                    TextToSpeech.LANG_NOT_SUPPORTED
+            if (languageResult == TextToSpeech.LANG_MISSING_DATA ||
+                languageResult == TextToSpeech.LANG_NOT_SUPPORTED
             ) {
-
                 engine.shutdown()
-
-                alarmAudioManager.releaseAlarmAudioFocus()
                 pendingResult.finish()
-
                 return@TextToSpeech
             }
 
-            /*
-             * Monitor TTS completion so that:
-             *
-             * 1. TTS engine is released
-             * 2. Audio focus is released
-             * 3. BroadcastReceiver finishes
-             */
-            engine.setOnUtteranceProgressListener(
-                object : UtteranceProgressListener() {
+            engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                override fun onStart(utteranceId: String?) = Unit
 
-                    override fun onStart(
-                        utteranceId: String?
-                    ) {
-                        // TTS started.
-                    }
-
-                    override fun onDone(
-                        utteranceId: String?
-                    ) {
-
-                        engine.shutdown()
-
-                        alarmAudioManager
-                            .releaseAlarmAudioFocus()
-
-                        pendingResult.finish()
-                    }
-
-                    @Deprecated("Deprecated in Java")
-                    override fun onError(
-                        utteranceId: String?
-                    ) {
-
-                        engine.shutdown()
-
-                        alarmAudioManager
-                            .releaseAlarmAudioFocus()
-
-                        pendingResult.finish()
-                    }
+                override fun onDone(utteranceId: String?) {
+                    engine.shutdown()
+                    pendingResult.finish()
                 }
-            )
 
-            /*
-             * Speak the reminder.
-             *
-             * AudioAttributes above force this TTS to use
-             * ALARM audio usage.
-             */
+                @Deprecated("Deprecated in Java")
+                override fun onError(utteranceId: String?) {
+                    engine.shutdown()
+                    pendingResult.finish()
+                }
+            })
+
+            // Explicitly request normal TTS gain (1.0) while routing through
+            // the Android ALARM audio usage/stream.
+            val params = Bundle().apply {
+                putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0f)
+            }
+
             val result = engine.speak(
                 speech,
                 TextToSpeech.QUEUE_FLUSH,
-                null,
-                "REMINDER_$id"
+                params,
+                "REMINDER_$id",
             )
 
             if (result == TextToSpeech.ERROR) {
-
                 engine.shutdown()
-
-                alarmAudioManager
-                    .releaseAlarmAudioFocus()
-
                 pendingResult.finish()
             }
         }
